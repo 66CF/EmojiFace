@@ -1,0 +1,269 @@
+name: Android CI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 原始权限，用于 checkout 和 create-release
+      packages: write # 如果您使用 ghcr.io
+      pull-requests: read # 如果需要读取pr信息
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Fetch all tags
+        run: git fetch --tags --force
+
+      - name: Determine Changelog Range
+        id: changelog_range
+        run: |
+          # 获取最新的稳定版 (非 prerelease) 的 tag 作为起点
+          # --repo ${{ github.repository }} 确保在 fork 的仓库里也能正确执行
+          LATEST_TAG=$(gh release list --repo ${{ github.repository }} --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName')
+
+          if [[ -z "$LATEST_TAG" ]]; then
+            # 如果没有找到任何稳定版 release，就从仓库的第一个 commit 开始
+            echo "未找到稳定版 Release, 将从最初的 commit 开始生成日志。"
+            BASE_REF=$(git rev-list --max-parents=0 HEAD)
+          else
+            echo "找到最新的稳定版 Release: $LATEST_TAG"
+            BASE_REF=$LATEST_TAG
+          fi
+
+          echo "base_ref=$BASE_REF" >> $GITHUB_OUTPUT
+          # 终点是当前触发工作流的 commit
+          echo "head_ref=${{ github.sha }}" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Storing key.properties
+        run: |
+          echo "${{ secrets.KEY_PROPERTIES }}" | base64 --decode > ./key.properties
+          ls ./
+          ls -l key.properties
+
+      - name: Storing keystore
+        run: |
+          echo "${{ secrets.KEYSTORE }}" | base64 --decode > ./app/key.keystore
+          ls ./app
+          ls -l ./app/key.keystore
+
+      - name: Storing keystore
+        run: |
+          echo "${{ secrets.KEYSTORE }}" | base64 --decode > ./key.keystore
+          ls -l ./key.keystore
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+      - name: Build with Gradle
+        run: |
+          ./gradlew :app:assembleRelease
+          
+          echo "APK_FILE_ARMV8_ICON_ENABLED=$(find app/build/outputs/apk -name '*default-arm64*.apk')" >> $GITHUB_ENV
+          echo "APK_FILE_UNI_ICON_ENABLED=$(find app/build/outputs/apk -name '*default-universal*.apk')" >> $GITHUB_ENV
+          echo "APK_FILE_ARMV8_ICON_DISABLED=$(find app/build/outputs/apk -name '*disabled-arm64*.apk')" >> $GITHUB_ENV
+          echo "APK_FILE_UNI_ICON_DISABLED=$(find app/build/outputs/apk -name '*disabled-universal*.apk')" >> $GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        name: Upload apk (icon-enabled-arm64-v8a)
+        with:
+          name: facemoji-default-arm64-v8a.apk
+          path: ${{ env.APK_FILE_ARMV8_ICON_ENABLED }}
+      - uses: actions/upload-artifact@v4
+        name: Upload apk (icon-enabled-universal)
+        with:
+          name: facemoji-default-universal.apk
+          path: ${{ env.APK_FILE_UNI_ICON_ENABLED }}
+      - uses: actions/upload-artifact@v4
+        name: Upload apk (icon-disabled-arm64-v8a)
+        with:
+          name: facemoji-icon-disabled-arm64-v8a.apk
+          path: ${{ env.APK_FILE_ARMV8_ICON_DISABLED }}
+      - uses: actions/upload-artifact@v4
+        name: Upload apk (icon-disabled-universal)
+        with:
+          name: facemoji-icon-disabled-universal.apk
+          path: ${{ env.APK_FILE_UNI_ICON_DISABLED }}
+
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+
+      # 获取今天已有的 releases 数量，用于生成序号
+      - name: Get number of today's releases
+        id: release_count
+        run: |
+          DATE=${{ steps.date.outputs.date }}
+          COUNT=$(gh release list --limit 100 | grep "$DATE" | wc -l)
+          COUNT=$((COUNT + 1))
+          printf "count=%02d\n" "$COUNT" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+      - name: Generate Changelog
+        id: generate_changelog
+        run: |
+          git log --reverse ${{ steps.changelog_range.outputs.base_ref }}..${{ steps.changelog_range.outputs.head_ref }} --pretty=format:"* %s (%h)" > changelog.txt
+          DELIMITER=$(openssl rand -hex 16)
+          echo "changelog<<$DELIMITER" >> "$GITHUB_OUTPUT"
+          echo "## Changes" >> "$GITHUB_OUTPUT"
+          cat changelog.txt >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "$DELIMITER" >> "$GITHUB_OUTPUT"
+
+      - name: Upload changelog artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog-data
+          path: changelog.txt
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          tag_name: release-${{ steps.date.outputs.date }}-${{ steps.release_count.outputs.count }}
+          release_name: Release ${{ steps.date.outputs.date }}
+          prerelease: true
+          body: ${{ steps.generate_changelog.outputs.changelog }}
+
+      - uses: actions/upload-release-asset@v1
+        name: Upload Release APK (iconEnabled, arm64-v8a)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.APK_FILE_ARMV8_ICON_ENABLED }}
+          asset_name: facemoji-default-arm64-v8a.apk
+          asset_content_type: application/vnd.android.package-archive
+
+      - uses: actions/upload-release-asset@v1
+        name: Upload Release APK (iconEnabled, universal)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.APK_FILE_UNI_ICON_ENABLED }}
+          asset_name: facemoji-default-universal.apk
+          asset_content_type: application/vnd.android.package-archive
+
+      - uses: actions/upload-release-asset@v1
+        name: Upload Release APK (iconDisabled, arm64-v8a)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.APK_FILE_ARMV8_ICON_DISABLED }}
+          asset_name: facemoji-icon-disabled-arm64-v8a.apk
+          asset_content_type: application/vnd.android.package-archive
+
+      - uses: actions/upload-release-asset@v1
+        name: Upload Release APK (iconDisabled, universal)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ env.APK_FILE_UNI_ICON_DISABLED }}
+          asset_name: facemoji-icon-disabled-universal.apk
+          asset_content_type: application/vnd.android.package-archive
+
+
+  upload:
+    name: Upload Release
+    runs-on: ubuntu-latest
+    needs:
+      - build
+      - telegram-bot-api
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Download Telegram Bot API Binary
+        uses: actions/download-artifact@master
+        with:
+          name: telegram-bot-api-binary
+          path: .
+
+      - name: Download Changelog Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog-data
+
+      - name: find apk
+        run: |
+          mkdir apks
+          find artifacts -name "*.apk" -exec cp {} apks \;
+          echo "APK_FILE_UPLOAD1=$(find apks -name '*default-arm64*.apk')" >> $GITHUB_ENV
+          echo "APK_FILE_UPLOAD2=$(find apks -name '*disabled-arm64*.apk')" >> $GITHUB_ENV
+          ls ./apks
+
+      - name: Get Apk Info
+        id: apk
+        uses: JantHsueh/get-apk-info-action@master
+        with:
+          apkPath: ${{ env.APK_FILE_UPLOAD1 }}
+
+      - name: Release
+        run: |
+          chmod +x telegram-bot-api-binary
+          ./telegram-bot-api-binary --api-id=21724 --api-hash=3e0cb5efcd52300aec5994fdfc5bdc16 --local 2>&1 > /dev/null &
+          curl https://raw.githubusercontent.com/Steve-Mr/EmojiFace/dev/.github/scripts/upload.py -o uploadCI.py
+          python uploadCI.py > upload.txt
+          cat upload.txt
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          VERSION_CODE: ${{steps.apk.outputs.versionCode}}
+          VERSION_NAME: ${{steps.apk.outputs.versionNum}}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          APK_FILE_UPLOAD1: ${{ env.APK_FILE_UPLOAD1 }}
+          APK_FILE_UPLOAD2: ${{ env.APK_FILE_UPLOAD2 }}
+
+  telegram-bot-api:
+    name: Telegram Bot API
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Clone Telegram Bot API
+        run: |
+          git clone --recursive https://github.com/tdlib/telegram-bot-api.git
+          git status telegram-bot-api >> telegram-bot-api-status
+      - name: Cache Bot API Binary
+        id: cache-bot-api
+        uses: actions/cache@v4
+        with:
+          path: telegram-bot-api-binary
+          key: CI-telegram-bot-api-${{ hashFiles('telegram-bot-api-status') }}
+      - name: Compile Telegram Bot API
+        if: steps.cache-bot-api.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install make git zlib1g-dev libssl-dev gperf cmake g++
+          cd telegram-bot-api
+          rm -rf build
+          mkdir build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=.. ..
+          cmake --build . --target install -j$(nproc)
+          cd ../..
+          ls -l telegram-bot-api/bin/telegram-bot-api*
+          cp telegram-bot-api/bin/telegram-bot-api telegram-bot-api-binary
+      - name: Upload Binary
+        uses: actions/upload-artifact@master
+        with:
+          name: telegram-bot-api-binary
+          path: telegram-bot-api-binary

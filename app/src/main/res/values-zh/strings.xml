@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FaceMoji</string>
+    <string name="share">分享</string>
+    <string name="save">保存</string>
+    <string name="clear_photo">清除当前图片</string>
+    <string name="exit">退出</string>
+    <string name="choose_image">选择图片</string>
+    <string name="save_success">已保存</string>
+    <string name="save_failed">保存失败：%s</string>
+    <string name="share_failed">分享失败: %s</string>
+    <string name="settings">设置</string>
+    <string name="hide_home">隐藏应用图标</string>
+    <string name="hide_home_bug">"由于系统限制，部分设备上可能不会彻底隐藏图标。 "</string>
+    <string name="choose_font">选择字体文件</string>
+    <string name="cancel">取消</string>
+    <string name="ok">确定</string>
+    <string name="done">完成</string>
+    <string name="default_font">默认字体</string>
+    <string name="remove_font">移除此字体</string>
+    <string name="process_result">处理结果</string>
+    <string name="change_emoji">更改表情</string>
+    <string name="new_emoji">新表情</string>
+    <string name="emoji_size">大小</string>
+    <string name="emoji_angle">旋转角度</string>
+    <string name="created_by">此照片经过 FaceMoji 编辑。</string>
+    <string name="emoji_list">Emoji 列表</string>
+    <string name="emoji_font">Emoji 字体</string>
+    <string name="confirm_delete_title">确认删除</string>
+    <string name="confirm_delete_message">您确定要删除这个表情符号吗？</string>
+    <string name="too_deep">深 度 识 别</string>
+    <string name="too_deep_description">（超深！）</string>
+    <string name="just_kidding">开个玩笑，不会保存到最终结果。</string>
+    <string name="mosaic_mode">遮挡模式</string>
+    <string name="mosaic">模糊</string>
+    <string name="emoji">Emoji</string>
+    <string name="add">添加</string>
+    <string name="gaussian">高斯模糊</string>
+    <string name="pixelated">像素化</string>
+    <string name="halftone">半色调</string>
+    <string name="face">面部</string>
+    <string name="eyes">眼部</string>
+    <string name="mosaic_target">目标</string>
+</resources>
